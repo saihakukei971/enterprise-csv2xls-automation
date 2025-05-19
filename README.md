@@ -1,5 +1,3 @@
-# enterprise-csv2xls-automation
-
 # 広告管理システム自動レポート収集ツール
 
 ## 📋 プロジェクト概要
