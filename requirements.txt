@@ -1,0 +1,16 @@
+# Ad Management System Automated Report Collection Tool
+# Python 3.10+ recommended
+
+# Browser automation
+playwright==1.43.0
+
+# Excel operations
+xlwings==0.30.12
+
+# Logging and display
+loguru==0.7.2
+rich==13.7.0
+
+# Helper libraries
+python-dateutil==2.8.2
+pywin32==306
