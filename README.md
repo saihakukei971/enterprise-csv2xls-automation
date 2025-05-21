@@ -192,26 +192,24 @@ def detect_encoding(file_path):
 
 ```
 /
-├── browser_control.py      # ブラウザ自動操作（Playwright）
-├── excel_writer.py         # CSV→Excel転記・マクロ実行処理
-├── month_checker.py        # 月替わり処理判定
-├── parse_log.py            # ログ解析・表示ツール
-├── run.bat                 # 実行用バッチファイル
-│
-├── csv/                    # CSVデータ保存ディレクトリ
-│   └── YYYYMMDD/           # 日付別サブディレクトリ
-│       ├── advertiser.csv  # 広告主リスト
-│       ├── general_campane.csv  # 一般広告データ
-│       └── adult_campane.csv    # アダルト広告データ
-│
-├── meta/                   # メタ情報格納ディレクトリ
-│   ├── last_created.txt    # 最終生成日時記録
-│   └── template.xlsm       # マクロ付きExcelテンプレート
-│
-├── log/                    # ログディレクトリ
-│   └── YYYYMMDD.log        # 日付別ログファイル
-│
-└── tmp/                    # 一時ファイル格納用ディレクトリ
+├── browser_control.py              # Playwrightでサイト操作・検索・CSV取得
+├── csv/                            # CSV格納ディレクトリ
+│   └── 20250519/                   # 処理対象の日付フォルダ
+│       ├── adult_campane.csv       # アダルト広告キャンペーンデータ
+│       ├── advertiser.csv          # 広告主一覧CSV
+│       └── general_campane.csv     # 一般広告キャンペーンデータ
+├── excel_writer.py                # 取得CSVをExcelに転記＋整形処理（テンプレ使用）
+├── input_start_end_1min.bat       # 日付入力 → Python渡し → サイト検索・CSV取得用バッチ
+│                                  # └─ 1分以内未入力なら昨日の日付が自動選択される仕様
+├── meta/                          # メタ情報（テンプレート・前回実行記録など）
+│   ├── last_created.txt
+│   └── template.xlsm
+├── month_checker.py              # 月の切替判定（シート名変更やファイル保存先切替に使用）
+├── parse_log.py                  # ログ解析ツール（主にバグ調査や履歴確認用）
+├── run.bat                       # 一括実行バッチ（ブラウザ操作→Excel出力まで）
+├── setup.bat                     # 初期セットアップ・依存関係チェックバッチ
+└── tmp/                          # 一時ファイル格納用ディレクトリ（処理中の中間ファイル用）
+
 ```
 
 ## ⚙️ セットアップ手順
