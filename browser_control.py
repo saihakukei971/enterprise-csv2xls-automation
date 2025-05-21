@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-fam8サイトからCSVを取得するモジュール（完全修正版）
+fam8サイトからCSVを取得するモジュール（完全修正版 - 日付範囲対応）
 """
 import os
 import sys
@@ -47,6 +47,12 @@ CONFIG = {
     # ブラウザ設定
     "BROWSER": {
         "headless": False,
+    },
+    
+    # 処理モード
+    "PROCESSING_MODE": {
+        # trueの場合、日付範囲を一括処理。falseの場合、日付ごとに個別処理
+        "range_as_batch": True
     }
 }
 
@@ -64,8 +70,20 @@ def setup_logger():
     logger.add(log_file, format=format_string, level="INFO", encoding="utf-8", enqueue=True)
     logger.add(sys.stderr, format=format_string, level="INFO", colorize=True)
 
+def validate_date_format(date_str):
+    """日付フォーマットの検証（YYYYMMDD形式か）"""
+    if not date_str or len(date_str) != 8:
+        return False
+    
+    try:
+        # 正しい日付フォーマットか検証
+        datetime.strptime(date_str, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
+
 def parse_date_range(date_str):
-    """日付範囲の解析"""
+    """日付範囲の解析と検証"""
     if date_str == "default" or not date_str:
         # デフォルト: 昨日の日付
         yesterday = datetime.now() - timedelta(days=1)
@@ -73,15 +91,56 @@ def parse_date_range(date_str):
    
     if "-" in date_str:
         # 日付範囲指定: 20250512-20250515
-        start, end = date_str.split("-")
+        parts = date_str.split("-")
+        if len(parts) != 2:
+            logger.error(f"無効な日付範囲フォーマット: {date_str}")
+            raise ValueError(f"無効な日付範囲フォーマット: {date_str}")
+        
+        start, end = parts
+        
+        # 日付フォーマット検証
+        if not validate_date_format(start) or not validate_date_format(end):
+            logger.error(f"無効な日付フォーマット: {date_str}")
+            raise ValueError(f"無効な日付フォーマット: {date_str}")
+        
+        # 終了日が開始日より前でないことを確認
+        start_date = datetime.strptime(start, "%Y%m%d")
+        end_date = datetime.strptime(end, "%Y%m%d")
+        
+        if end_date < start_date:
+            logger.error(f"終了日が開始日より前です: {date_str}")
+            raise ValueError(f"終了日が開始日より前です: {date_str}")
+        
         return start, end
    
     # 単一日付: 20250512
+    if not validate_date_format(date_str):
+        logger.error(f"無効な日付フォーマット: {date_str}")
+        raise ValueError(f"無効な日付フォーマット: {date_str}")
+        
     return date_str, date_str
 
 def format_date_for_site(date_str):
     """YYYYMMDD → YYYY-MM-DD に変換"""
+    if not date_str or len(date_str) != 8:
+        logger.error(f"無効な日付フォーマット (format_date_for_site): {date_str}")
+        raise ValueError(f"無効な日付フォーマット: {date_str}")
+        
     return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+
+def generate_date_range(start_date, end_date):
+    """開始日から終了日までの日付リストを生成"""
+    date_list = []
+    
+    start_obj = datetime.strptime(start_date, "%Y%m%d")
+    end_obj = datetime.strptime(end_date, "%Y%m%d")
+    
+    current = start_obj
+    while current <= end_obj:
+        date_list.append(current.strftime("%Y%m%d"))
+        current += timedelta(days=1)
+        
+    return date_list
 
 async def login(page, logger):
     """ログイン処理を実行"""
@@ -114,8 +173,8 @@ async def login(page, logger):
    
     logger.info("レポートモードに正常に切り替わりました")
 
-async def process_csv(page, logger, mode, csv_dir, target_date):
-    """CSV取得処理（一般/アダルト共通）"""
+async def process_csv(page, logger, mode, csv_dir, start_date, end_date):
+    """CSV取得処理（一般/アダルト共通）- 日付範囲対応"""
     mode_jp = "一般" if mode == "general" else "アダルト"
     start_time = time.time()
     logger.info(f"{mode_jp}モードでのCSV取得処理を開始します")
@@ -123,11 +182,60 @@ async def process_csv(page, logger, mode, csv_dir, target_date):
     general_checkbox = "//*[@id='main_area']/form/div[1]/table/tbody/tr[1]/td[1]/input[2]"
     adult_checkbox = "//*[@id='main_area']/form/div[1]/table/tbody/tr[2]/td[1]/input[2]"
    
-    # 日付範囲を設定
-    date_str = format_date_for_site(target_date)
-    await page.fill("//*[@id='cal_input_from']", date_str)
-    await page.fill("//*[@id='cal_input_to']", date_str)
+    # 日付範囲を設定 - 開始日と終了日を別々に設定
+    start_date_str = format_date_for_site(start_date)
+    end_date_str = format_date_for_site(end_date)
+    
+    # 重要: 開始日フィールドにフォーカスしてから入力
+    await page.focus("//*[@id='cal_input_from']")
+    await page.fill("//*[@id='cal_input_from']", start_date_str)
+    logger.info(f"開始日を設定しました: {start_date_str}")
     await asyncio.sleep(CONFIG["WAIT"]["after_click"])
+    
+    # 重要: 終了日フィールドにフォーカスしてから入力
+    await page.focus("//*[@id='cal_input_to']")
+    await page.fill("//*[@id='cal_input_to']", end_date_str)
+    logger.info(f"終了日を設定しました: {end_date_str}")
+    await asyncio.sleep(CONFIG["WAIT"]["after_click"])
+    
+    # フォーカスを外して日付入力を確定
+    await page.click("body")
+    await asyncio.sleep(CONFIG["WAIT"]["after_click"])
+    
+    # 入力内容を検証 (とても重要)
+    actual_start = await page.input_value("//*[@id='cal_input_from']")
+    actual_end = await page.input_value("//*[@id='cal_input_to']")
+    
+    logger.info(f"検証 - 開始日: {actual_start}, 終了日: {actual_end}")
+    
+    if actual_start != start_date_str or actual_end != end_date_str:
+        logger.warning(f"日付入力値が期待と異なります。開始日: 期待={start_date_str}, 実際={actual_start}; 終了日: 期待={end_date_str}, 実際={actual_end}")
+        
+        # 再試行
+        logger.info("日付入力を再試行します")
+        
+        # 既存の入力をクリア
+        await page.fill("//*[@id='cal_input_from']", "")
+        await page.fill("//*[@id='cal_input_to']", "")
+        await asyncio.sleep(1)
+        
+        # JavaScriptで直接設定
+        await page.evaluate(f"""
+            document.querySelector('#cal_input_from').value = '{start_date_str}';
+            document.querySelector('#cal_input_to').value = '{end_date_str}';
+        """)
+        logger.info("JavaScriptで日付を設定しました")
+        await asyncio.sleep(1)
+        
+        # 再検証
+        actual_start = await page.input_value("//*[@id='cal_input_from']")
+        actual_end = await page.input_value("//*[@id='cal_input_to']")
+        
+        logger.info(f"再検証 - 開始日: {actual_start}, 終了日: {actual_end}")
+        
+        if actual_start != start_date_str or actual_end != end_date_str:
+            logger.error("日付入力の再試行が失敗しました")
+            raise Exception("日付範囲の設定に失敗しました")
    
     if mode == "general":
         # 「一般」モードの場合：アダルトチェックを外す
@@ -232,7 +340,12 @@ async def process_csv(page, logger, mode, csv_dir, target_date):
         logger.info(f"ダウンロードしたファイルのサイズ: {file_size} バイト")
        
         # 本保存先にリネームしてコピー
-        save_path = os.path.join(csv_dir, "general_campane.csv" if mode == "general" else "adult_campane.csv")
+        # ファイル名に日付範囲を含める
+        file_prefix = ""
+        if start_date != end_date:
+            file_prefix = f"{start_date}-{end_date}_"
+            
+        save_path = os.path.join(csv_dir, f"{file_prefix}{mode}_campane.csv")
         shutil.copy2(tmp_path, save_path)
         logger.info(f"{mode_jp}CSV保存：{save_path}")
         # ▼▼▼ ダウンロード後の反映待機（5秒） ▼▼▼
@@ -241,10 +354,10 @@ async def process_csv(page, logger, mode, csv_dir, target_date):
         return True
     except Exception as e:
         logger.error(f"CSVダウンロードエラー: {str(e)}")
-        raise Exception("CSVダウンロードに失敗しました")
+        raise Exception(f"CSVダウンロードに失敗しました: {str(e)}")
 
-async def get_advertiser_csv(page, csv_dir, target_date):
-    """広告主CSVの取得処理"""
+async def get_advertiser_csv(page, csv_dir, start_date, end_date):
+    """広告主CSVの取得処理 - 日付範囲対応"""
     logger.info("広告主CSV取得開始")
    
     # 広告主画面に遷移
@@ -256,11 +369,60 @@ async def get_advertiser_csv(page, csv_dir, target_date):
     await page.wait_for_load_state("networkidle")
     await asyncio.sleep(CONFIG["WAIT"]["after_report_mode"])
    
-    # 日付範囲を設定
-    date_str = format_date_for_site(target_date)
-    await page.fill("//*[@id='cal_input_from']", date_str)
-    await page.fill("//*[@id='cal_input_to']", date_str)
+    # 日付範囲を設定 - 開始日と終了日を別々に設定
+    start_date_str = format_date_for_site(start_date)
+    end_date_str = format_date_for_site(end_date)
+    
+    # 重要: 開始日フィールドにフォーカスしてから入力
+    await page.focus("//*[@id='cal_input_from']")
+    await page.fill("//*[@id='cal_input_from']", start_date_str)
+    logger.info(f"開始日を設定しました: {start_date_str}")
     await asyncio.sleep(CONFIG["WAIT"]["after_click"])
+    
+    # 重要: 終了日フィールドにフォーカスしてから入力
+    await page.focus("//*[@id='cal_input_to']")
+    await page.fill("//*[@id='cal_input_to']", end_date_str)
+    logger.info(f"終了日を設定しました: {end_date_str}")
+    await asyncio.sleep(CONFIG["WAIT"]["after_click"])
+    
+    # フォーカスを外して日付入力を確定
+    await page.click("body")
+    await asyncio.sleep(CONFIG["WAIT"]["after_click"])
+    
+    # 入力内容を検証 (とても重要)
+    actual_start = await page.input_value("//*[@id='cal_input_from']")
+    actual_end = await page.input_value("//*[@id='cal_input_to']")
+    
+    logger.info(f"検証 - 開始日: {actual_start}, 終了日: {actual_end}")
+    
+    if actual_start != start_date_str or actual_end != end_date_str:
+        logger.warning(f"日付入力値が期待と異なります。開始日: 期待={start_date_str}, 実際={actual_start}; 終了日: 期待={end_date_str}, 実際={actual_end}")
+        
+        # 再試行
+        logger.info("日付入力を再試行します")
+        
+        # 既存の入力をクリア
+        await page.fill("//*[@id='cal_input_from']", "")
+        await page.fill("//*[@id='cal_input_to']", "")
+        await asyncio.sleep(1)
+        
+        # JavaScriptで直接設定
+        await page.evaluate(f"""
+            document.querySelector('#cal_input_from').value = '{start_date_str}';
+            document.querySelector('#cal_input_to').value = '{end_date_str}';
+        """)
+        logger.info("JavaScriptで日付を設定しました")
+        await asyncio.sleep(1)
+        
+        # 再検証
+        actual_start = await page.input_value("//*[@id='cal_input_from']")
+        actual_end = await page.input_value("//*[@id='cal_input_to']")
+        
+        logger.info(f"再検証 - 開始日: {actual_start}, 終了日: {actual_end}")
+        
+        if actual_start != start_date_str or actual_end != end_date_str:
+            logger.error("日付入力の再試行が失敗しました")
+            raise Exception("日付範囲の設定に失敗しました")
    
     # 表示項目設定リンククリック
     await page.click("a:has-text('表示項目設定')")
@@ -390,22 +552,118 @@ async def get_advertiser_csv(page, csv_dir, target_date):
         logger.info(f"ダウンロードしたファイルのサイズ: {file_size} バイト")
        
         # 本保存先にリネームしてコピー
-        save_path = os.path.join(csv_dir, "advertiser.csv")
+        # ファイル名に日付範囲を含める
+        file_prefix = ""
+        if start_date != end_date:
+            file_prefix = f"{start_date}-{end_date}_"
+            
+        save_path = os.path.join(csv_dir, f"{file_prefix}advertiser.csv")
         shutil.copy2(tmp_path, save_path)
         logger.info(f"広告主CSV保存：{save_path}")
         # ▼▼▼ ダウンロード完了後、ブラウザクローズ前に安定化待機（2秒） ▼▼▼
         logger.info("ダウンロード完了後のブラウザ維持のため2秒待機開始...")
         await asyncio.sleep(2)
         logger.info("2秒待機完了。returnを実行します。")
-                
-       
+               
+      
         return True
     except Exception as e:
         logger.error(f"CSVダウンロードエラー: {str(e)}")
-        raise Exception("CSVダウンロードに失敗しました")
+        raise Exception(f"CSVダウンロードに失敗しました: {str(e)}")
 
-async def download_csvs(target_date):
-    """CSVダウンロード処理のメイン関数"""
+async def process_date_individually(date_list):
+    """各日付を個別に処理する（従来の動作）"""
+    logger.info("各日付を個別に処理します（従来モード）")
+   
+    results = []
+   
+    for target_date in date_list:
+        logger.info(f"--- {target_date} の処理開始 ---")
+       
+        # CSV保存ディレクトリ作成
+        csv_base_dir = Path(CONFIG["PATHS"]["csv_base_dir"])
+        csv_base_dir.mkdir(exist_ok=True)
+       
+        csv_dir = csv_base_dir / target_date
+        csv_dir.mkdir(exist_ok=True)
+       
+        logger.info(f"CSVディレクトリ: {csv_dir}")
+       
+        # TMP ディレクトリ準備
+        tmp_dir = Path(CONFIG["PATHS"]["tmp_dir"])
+        tmp_dir.mkdir(exist_ok=True)
+       
+        # 既存ファイルをクリア
+        for file in tmp_dir.glob("*"):
+            if file.is_file():
+                file.unlink()
+       
+        async with async_playwright() as playwright:
+            # ブラウザ起動
+            browser_launch_options = {"headless": CONFIG["BROWSER"]["headless"]}
+            logger.info("ブラウザを起動しています...")
+            browser = await playwright.chromium.launch(**browser_launch_options)
+           
+            # コンテキスト作成
+            context_options = {
+                "accept_downloads": True,
+                "viewport": {"width": 1280, "height": 800}
+            }
+           
+            # コンテキスト作成
+            context = await browser.new_context(**context_options)
+            page = await context.new_page()
+           
+            page.set_default_timeout(CONFIG["TIMEOUT"]["page"])
+            page.set_default_navigation_timeout(CONFIG["TIMEOUT"]["navigation"])
+           
+            try:
+                # ログイン & レポートモード設定
+                await login(page, logger)
+               
+                # 一般モードのCSV取得 - 単一日付として処理
+                await process_csv(page, logger, "general", str(csv_dir), target_date, target_date)
+               
+                logger.info(f"{CONFIG['WAIT']['between_steps']}秒間待機します...")
+                await asyncio.sleep(CONFIG["WAIT"]["between_steps"])
+               
+                # アダルトモードのCSV取得 - 単一日付として処理
+                await process_csv(page, logger, "adult", str(csv_dir), target_date, target_date)
+               
+                logger.info(f"{CONFIG['WAIT']['between_steps']}秒間待機します...")
+                await asyncio.sleep(CONFIG["WAIT"]["between_steps"])
+               
+                # 広告主CSV取得 - 単一日付として処理
+                await get_advertiser_csv(page, str(csv_dir), target_date, target_date)
+               
+                # ブラウザクローズ
+                await browser.close()
+               
+                logger.info(f"{target_date} の処理が完了しました")
+                results.append({"date": target_date, "path": str(csv_dir), "success": True})
+               
+            except Exception as e:
+                logger.error(f"{target_date} の処理中にエラーが発生しました: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                await browser.close()
+                results.append({"date": target_date, "error": str(e), "success": False})
+   
+    # 成功・失敗の結果を表示
+    success_count = sum(1 for r in results if r["success"])
+    logger.info(f"処理結果: 成功={success_count}, 失敗={len(results) - success_count}")
+   
+    if len(results) > 0 and results[0]["success"]:
+        # 最初の成功した処理のパスを返す
+        print(results[0]["path"])
+        return 0 if success_count == len(results) else 1
+    else:
+        return 1
+
+async def process_date_range(start_date, end_date):
+    """日付範囲を一括で処理する（新機能）"""
+    logger.info(f"日付範囲 {start_date} から {end_date} を一括処理します")
+   
     # TMP ディレクトリ準備
     tmp_dir = Path(CONFIG["PATHS"]["tmp_dir"])
     tmp_dir.mkdir(exist_ok=True)
@@ -415,11 +673,12 @@ async def download_csvs(target_date):
         if file.is_file():
             file.unlink()
    
-    # CSV保存ディレクトリ作成
+    # CSV保存ディレクトリ作成 - 日付範囲に基づいた命名
     csv_base_dir = Path(CONFIG["PATHS"]["csv_base_dir"])
     csv_base_dir.mkdir(exist_ok=True)
    
-    csv_dir = csv_base_dir / target_date
+    dir_name = start_date if start_date == end_date else f"{start_date}-{end_date}"
+    csv_dir = csv_base_dir / dir_name
     csv_dir.mkdir(exist_ok=True)
    
     logger.info(f"CSVディレクトリ: {csv_dir}")
@@ -448,31 +707,24 @@ async def download_csvs(target_date):
             await login(page, logger)
            
             # 一般モードのCSV取得
-            await process_csv(page, logger, "general", str(csv_dir), target_date)
+            await process_csv(page, logger, "general", str(csv_dir), start_date, end_date)
            
             logger.info(f"{CONFIG['WAIT']['between_steps']}秒間待機します...")
             await asyncio.sleep(CONFIG["WAIT"]["between_steps"])
            
             # アダルトモードのCSV取得
-            await process_csv(page, logger, "adult", str(csv_dir), target_date)
+            await process_csv(page, logger, "adult", str(csv_dir), start_date, end_date)
            
             logger.info(f"{CONFIG['WAIT']['between_steps']}秒間待機します...")
             await asyncio.sleep(CONFIG["WAIT"]["between_steps"])
            
             # 広告主CSV取得
-            # await page.goto(CONFIG["LOGIN"]["url"])  # 一度ホームに戻る
-            # await asyncio.sleep(CONFIG["WAIT"]["after_click"])
-            await get_advertiser_csv(page, str(csv_dir), target_date)
-            
-            # ▼▼▼ get_advertiser_csv 終了直後、Playwright安定化のため追加待機 ▼▼▼
-            logger.info("広告主CSV取得後のブラウザ維持のため1.5秒待機開始...")
-            await asyncio.sleep(1.5)
-            logger.info("1.5秒待機完了。browser.close()を実行します。")
+            await get_advertiser_csv(page, str(csv_dir), start_date, end_date)
            
             # ブラウザクローズ
             await browser.close()
            
-            logger.info(f"全てのCSV取得処理が完了しました: {target_date}")
+            logger.info(f"日付範囲 {start_date} から {end_date} の処理が完了しました")
            
             # CSV保存先を標準出力に出力（後続処理で使用）
             print(str(csv_dir))
@@ -528,32 +780,39 @@ async def main():
             except ValueError:
                 logger.warning(f"無効な待機時間指定: {sys.argv[5]}")
        
+        # 処理モード設定
+        # コマンドライン引数から処理モードを設定可能にする（第6引数）
+        if len(sys.argv) > 6:
+            try:
+                mode_arg = sys.argv[6].lower()
+                if mode_arg in ['batch', 'range', '1']:
+                    CONFIG["PROCESSING_MODE"]["range_as_batch"] = True
+                    logger.info("処理モード: 日付範囲を一括処理")
+                elif mode_arg in ['individual', 'each', '0']:
+                    CONFIG["PROCESSING_MODE"]["range_as_batch"] = False
+                    logger.info("処理モード: 各日付を個別処理")
+            except Exception:
+                logger.warning(f"無効な処理モード指定: {sys.argv[6]}")
+       
         # 日付範囲解析
         start_date, end_date = parse_date_range(date_str)
        
-        # 単一日付の場合
+        # 日付リスト作成（個別処理モード用）
+        date_list = generate_date_range(start_date, end_date)
+       
+        # 処理日数の表示
         if start_date == end_date:
-            result = await download_csvs(start_date)
-            return result
+            logger.info(f"処理対象日: {start_date}")
+        else:
+            logger.info(f"処理対象期間: {start_date} から {end_date} ({len(date_list)}日間)")
        
-        # 日付範囲の場合
-        start_obj = datetime.strptime(start_date, "%Y%m%d")
-        end_obj = datetime.strptime(end_date, "%Y%m%d")
-       
-        current_date = start_obj
-        while current_date <= end_obj:
-            target_date = current_date.strftime("%Y%m%d")
-            logger.info(f"--- {target_date} の処理開始 ---")
-            result = await download_csvs(target_date)
-           
-            if result != 0:
-                logger.error(f"{target_date} の処理が失敗しました")
-                return result
-           
-            current_date += timedelta(days=1)
-       
-        logger.info("すべての日付範囲の処理が完了しました")
-        return 0
+        # 処理モードに応じた実行
+        if CONFIG["PROCESSING_MODE"]["range_as_batch"]:
+            # 日付範囲を一括処理
+            return await process_date_range(start_date, end_date)
+        else:
+            # 各日付を個別に処理
+            return await process_date_individually(date_list)
        
     except Exception as e:
         logger.error(f"処理全体でエラーが発生しました: {str(e)}")

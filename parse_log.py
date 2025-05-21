@@ -31,7 +31,9 @@ def parse_arguments():
     parser.add_argument("--module", "-m", help="モジュール名でフィルタ")
     parser.add_argument("--text", "-t", help="テキスト内容でフィルタ")
     
+    parser.add_argument("--export", action="store_true", help="TSV形式でlog_export.tsvに出力")  # ←この行を追加
     return parser.parse_args()
+
 
 def get_log_file(date_str=None):
     """指定日のログファイルパスを取得"""
@@ -135,6 +137,17 @@ def display_logs_table(log_entries):
     # 表を出力
     console.print(table)
 
+def export_to_tsv(log_entries, filepath="log_export.tsv"):
+    """ログをTSV形式でエクスポート（Excel対応）"""
+    import csv
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["時刻", "レベル", "モジュール:関数", "メッセージ"])
+        for entry in log_entries:
+            location = f"{entry['module']}:{entry['function']}"
+            writer.writerow([entry["timestamp"], entry["level"], location, entry["message"]])
+
+
 def main():
     """メイン関数"""
     args = parse_arguments()
@@ -156,8 +169,14 @@ def main():
     
     # 表示
     display_logs_table(filtered_entries)
+
+    # TSV出力（--exportオプションがあれば）
+    if args.export:
+        export_to_tsv(filtered_entries)
+        print("[INFO] ログを 'log_export.tsv' にエクスポートしました。")
     
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
